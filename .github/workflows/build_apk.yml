@@ -3,68 +3,114 @@ name: Build Android APK
 on:
   push:
     branches: [main]
-  workflow_dispatch:      # allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       # 1. Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python
-      - name: Set up Python 3.11
+      # 2. Set up Python 3.10 (most stable for Buildozer)
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      # 3. Install system dependencies for Buildozer
+      # 3. Install ALL system dependencies including AIDL fix
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk \
+            git zip unzip \
+            openjdk-17-jdk \
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
             python3-pip build-essential \
-            libltdl-dev
+            libltdl-dev \
+            libgdbm-dev libnss3-dev libreadline-dev libsqlite3-dev \
+            wget curl lzma
 
-      # 4. Install Buildozer + Cython
-      - name: Install Buildozer
+      # 4. Set JAVA_HOME explicitly
+      - name: Set JAVA_HOME
+        run: |
+          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
+          java -version
+
+      # 5. Install Android SDK + Build Tools (includes AIDL)
+      - name: Install Android SDK and AIDL
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O /tmp/cmdtools.zip
+          unzip -q /tmp/cmdtools.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
+
+          yes | sdkmanager --licenses > /dev/null 2>&1
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "ndk;25.2.9519653"
+
+          find $HOME/android-sdk/build-tools -name "aidl" | head -5
+
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$HOME/android-sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/build-tools/33.0.2" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+      # 6. Install Buildozer + Cython
+      - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
-          pip install buildozer cython
+          pip install buildozer cython virtualenv
 
-      # 5. Cache .buildozer directory (speeds up subsequent builds)
-      - name: Cache Buildozer global directory
+      # 7. Cache Buildozer downloads
+      - name: Cache Buildozer directory
         uses: actions/cache@v4
         with:
-          path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          path: |
+            ~/.buildozer
+            ${{ env.ANDROID_SDK_ROOT }}
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}-v2
           restore-keys: |
             buildozer-${{ runner.os }}-
 
-      # 6. Build the debug APK
-      - name: Build APK
+      # 8. Build the APK
+      - name: Build APK with Buildozer
         run: |
-          buildozer -v android debug
+          buildozer -v android debug 2>&1 | tee build.log
         env:
-          ANDROID_SDK_ROOT: /opt/android/sdk   # Buildozer manages its own SDK
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
 
-      # 7. Upload the APK as a downloadable artifact
-      - name: Upload APK artifact
+      # 9. Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ConstructionManagerPro-debug
           path: bin/*.apk
           retention-days: 14
 
-      # 8. Optional: print APK info
-      - name: APK info
+      # 10. Upload build log on failure (for debugging)
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - name: Done
         run: |
           ls -lh bin/*.apk
-          echo "✅ APK build complete. Download from the Actions artifacts tab."
+          echo "✅ APK ready — download from the Artifacts section above."
