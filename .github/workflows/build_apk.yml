@@ -15,13 +15,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python 3.10 (most stable for Buildozer)
+      # 2. Set up Python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 3. Install ALL system dependencies including AIDL fix
+      # 3. Install system dependencies
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -32,36 +32,43 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
             python3-pip build-essential \
-            libltdl-dev \
-            libgdbm-dev libnss3-dev libreadline-dev libsqlite3-dev \
-            wget curl lzma
+            libltdl-dev libgdbm-dev libnss3-dev \
+            libreadline-dev libsqlite3-dev wget curl lzma
 
-      # 4. Set JAVA_HOME explicitly
+      # 4. Set JAVA_HOME
       - name: Set JAVA_HOME
         run: |
           echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
           java -version
 
-      # 5. Install Android SDK + Build Tools (includes AIDL)
-      - name: Install Android SDK and AIDL
+      # 5. Install Android SDK with STABLE build-tools only
+      - name: Install Android SDK
         run: |
           mkdir -p $HOME/android-sdk/cmdline-tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O /tmp/cmdtools.zip
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip \
+            -O /tmp/cmdtools.zip
           unzip -q /tmp/cmdtools.zip -d $HOME/android-sdk/cmdline-tools
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools \
+             $HOME/android-sdk/cmdline-tools/latest
 
           export ANDROID_SDK_ROOT=$HOME/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
 
+          # Accept all licenses
           yes | sdkmanager --licenses > /dev/null 2>&1
+
+          # Install ONLY stable versions — no RC packages
           sdkmanager \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2" \
             "ndk;25.2.9519653"
 
-          find $HOME/android-sdk/build-tools -name "aidl" | head -5
+          # Verify aidl exists
+          echo "--- Verifying AIDL ---"
+          find $HOME/android-sdk/build-tools -name "aidl"
 
+          # Set env vars for all subsequent steps
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=$HOME/android-sdk/ndk/25.2.9519653" >> $GITHUB_ENV
           echo "$HOME/android-sdk/build-tools/33.0.2" >> $GITHUB_PATH
@@ -72,28 +79,41 @@ jobs:
       - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
-          pip install buildozer cython virtualenv
+          pip install buildozer==1.5.0 cython==0.29.37 virtualenv
 
-      # 7. Cache Buildozer downloads
-      - name: Cache Buildozer directory
+      # 7. Cache ONLY Buildozer downloads (NOT the sdk — avoids stale RC tools)
+      - name: Cache Buildozer downloads
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.buildozer
-            ${{ env.ANDROID_SDK_ROOT }}
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}-v2
+          path: ~/.buildozer/cache
+          key: buildozer-cache-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}-v4
           restore-keys: |
-            buildozer-${{ runner.os }}-
+            buildozer-cache-${{ runner.os }}-
 
-      # 8. Build the APK
+      # 8. Pre-configure Buildozer to use YOUR SDK (not download its own)
+      - name: Configure Buildozer to use existing SDK
+        run: |
+          mkdir -p ~/.buildozer/android/platform
+          # Symlink so Buildozer finds the SDK we already installed
+          ln -sfn $HOME/android-sdk \
+            ~/.buildozer/android/platform/android-sdk
+          ln -sfn $HOME/android-sdk/ndk/25.2.9519653 \
+            ~/.buildozer/android/platform/android-ndk-r25b
+
+          # Confirm buildozer.spec has correct settings
+          grep -E "android\.(sdk|ndk|api|build_tools)" buildozer.spec
+
+      # 9. Build the APK
       - name: Build APK with Buildozer
         run: |
           buildozer -v android debug 2>&1 | tee build.log
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          # Force Buildozer to use our pre-installed SDK
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
-      # 9. Upload APK artifact
+      # 10. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -101,7 +121,7 @@ jobs:
           path: bin/*.apk
           retention-days: 14
 
-      # 10. Upload build log on failure (for debugging)
+      # 11. Upload build log on failure
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -110,7 +130,8 @@ jobs:
           path: build.log
           retention-days: 7
 
+      # 12. Done
       - name: Done
         run: |
           ls -lh bin/*.apk
-          echo "✅ APK ready — download from the Artifacts section above."
+          echo "✅ APK ready — download
