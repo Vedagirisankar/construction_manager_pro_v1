@@ -12,8 +12,8 @@ source.exclude_dirs = tests, bin, .buildozer, __pycache__, dist, build
 # Version
 version = 1.0
 
-# Requirements — keep reportlab/openpyxl for export_utils.py
-requirements = python3==3.11,kivy==2.3.0,kivymd==1.2.0,sqlite3,reportlab,openpyxl,pillow
+# Requirements — removed sqlite3 (built-in), removed python3 version pin
+requirements = kivy==2.3.0,kivymd==1.2.0,reportlab,openpyxl,pillow
 
 # Orientation
 orientation = portrait
@@ -25,14 +25,14 @@ android.permissions = WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE, INTERNET
 android.api = 33
 android.minapi = 24
 android.ndk = 25b
+android.sdk = 33
+android.build_tools_version = 33.0.2
 android.archs = arm64-v8a, armeabi-v7a
+android.accept_sdk_license = True
 
-# Icon / Presplash (add your own icon.png / presplash.png here)
+# Icon / Presplash
 # icon.filename = %(source.dir)s/icon.png
 # presplash.filename = %(source.dir)s/presplash.png
-
-# Leave debug for now (use 'release' when signing for Play Store)
-# android.release_artifact = aab
 
 [buildozer]
 log_level = 2
